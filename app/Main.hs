@@ -2,7 +2,6 @@ module Main where
 
 import           Data.Char
 import Control.Applicative
-import GHC.Natural (Natural)
 
 newtype Parser a =
   Parser
@@ -57,6 +56,9 @@ satisfies f = Parser $ \input ->
   case input of
     (y:ys) | (f y) -> Just (ys, y)
     otherwise -> Nothing
+
+sepBy :: Parser a -> Parser b -> Parser [b]
+sepBy sep element = (:) <$> element <*> many (sep *> element) <|> pure []
   
 digit :: Parser Char
 digit = satisfies isDigit
@@ -86,6 +88,49 @@ escapeChar = ('"' <$ string "\\\"") <|>
 
 stringLiteral :: Parser String
 stringLiteral = char '"' *> many (normalChar <|> escapeChar) <* char '"'
+
+-- Json
+
+data JsonValue = JsonNull
+  | JsonBool Bool
+  | JsonString String
+  | JsonInt Int
+  | JsonArray [JsonValue]
+  | JsonObject [(String, JsonValue)]
+  -- TODO: JsonFloat
+  deriving (Show, Eq)
+
+json :: Parser JsonValue
+json = jsonNull <|> jsonBool <|> jsonInt <|> jsonString <|> jsonArray <|> jsonObject
+
+jsonNull :: Parser JsonValue
+jsonNull = JsonNull <$ string "null"
+
+jsonBool :: Parser JsonValue
+jsonBool = jsonTrue <|> jsonFalse <|> jsonString <|> jsonInt
+  where
+    jsonTrue = JsonBool True <$ string "true"
+    jsonFalse = JsonBool False <$ string "false"
+
+jsonString :: Parser JsonValue
+jsonString = JsonString <$> stringLiteral
+
+jsonInt :: Parser JsonValue
+jsonInt = JsonInt <$> integer
+
+-- TODO: does not support lists of multiple types -> [123, "hello"]
+-- TODO: handle whitespaces
+jsonArray :: Parser JsonValue
+jsonArray = fmap JsonArray $ char '[' *> arrayValues <* char ']'
+  where arrayValues = sepBy (char ',') json
+
+-- TODO: handle whitespaces
+jsonObject :: Parser JsonValue
+jsonObject = JsonObject <$> (char '{' *> assoc <* char '}')
+ where assoc = sepBy (char ',') $ pair (stringLiteral <* char ':') json
+
+pair :: Parser a -> Parser b -> Parser (a, b)
+pair = liftA2 (,)
 
 main :: IO ()
 main = putStrLn "Hello, Haskell!"
