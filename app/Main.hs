@@ -107,7 +107,7 @@ jsonNull :: Parser JsonValue
 jsonNull = JsonNull <$ string "null"
 
 jsonBool :: Parser JsonValue
-jsonBool = jsonTrue <|> jsonFalse <|> jsonString <|> jsonInt
+jsonBool = jsonTrue <|> jsonFalse
   where
     jsonTrue = JsonBool True <$ string "true"
     jsonFalse = JsonBool False <$ string "false"
