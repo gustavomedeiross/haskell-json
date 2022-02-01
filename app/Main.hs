@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Main where
 
 import           Data.Char
@@ -41,21 +43,17 @@ instance Monad Parser where
      parse (f a) input'
 
 char :: Char -> Parser Char
-char x = Parser f
-  where
-    f (y:ys)
-      | y == x = Just (ys, y)
-      | otherwise = Nothing
-    f [] = Nothing
+char x = Parser $ \case
+    y:ys | y == x -> Just (ys, y)
+    _ -> Nothing
 
 string :: String -> Parser String
 string = traverse char
 
 satisfies :: (Char -> Bool) -> Parser Char
-satisfies f = Parser $ \input ->
-  case input of
-    (y:ys) | (f y) -> Just (ys, y)
-    otherwise -> Nothing
+satisfies f = Parser $ \case
+    y:ys | f y -> Just (ys, y)
+    _ -> Nothing
 
 sepBy :: Parser a -> Parser b -> Parser [b]
 sepBy sep element = (:) <$> element <*> many (sep *> element) <|> pure []
@@ -67,10 +65,13 @@ natural :: Parser Int
 natural = read <$> some digit
 
 integer :: Parser Int
-integer = do char '-'
-             n <- natural
-             return (-n)
-           <|> natural
+integer = natural <|> char '-' *> (negate <$> natural)
+
+whitespace :: Parser ()
+whitespace = () <$ satisfies (== ' ')
+
+ws :: Parser ()
+ws = () <$ many whitespace
 
 normalChar :: Parser Char
 normalChar = satisfies ((&&) <$> (/= '"') <*> (/= '\\'))
@@ -88,6 +89,9 @@ escapeChar = ('"' <$ string "\\\"") <|>
 
 stringLiteral :: Parser String
 stringLiteral = char '"' *> many (normalChar <|> escapeChar) <* char '"'
+
+pair :: Parser a -> Parser b -> Parser (a, b)
+pair = liftA2 (,)
 
 -- Json
 
@@ -118,19 +122,17 @@ jsonString = JsonString <$> stringLiteral
 jsonInt :: Parser JsonValue
 jsonInt = JsonInt <$> integer
 
--- TODO: does not support lists of multiple types -> [123, "hello"]
--- TODO: handle whitespaces
 jsonArray :: Parser JsonValue
-jsonArray = fmap JsonArray $ char '[' *> arrayValues <* char ']'
-  where arrayValues = sepBy (char ',') json
+jsonArray = fmap JsonArray $ char '[' *> ws *> arrayValues <* ws <* char ']'
+  where
+    arrayValues = sepBy comma json
+    comma = ws *> char ',' <* ws
 
--- TODO: handle whitespaces
 jsonObject :: Parser JsonValue
-jsonObject = JsonObject <$> (char '{' *> assoc <* char '}')
- where assoc = sepBy (char ',') $ pair (stringLiteral <* char ':') json
-
-pair :: Parser a -> Parser b -> Parser (a, b)
-pair = liftA2 (,)
+jsonObject = fmap JsonObject $ char '{' *> ws *> assoc <* ws <* char '}'
+ where
+   assoc = sepBy comma $ pair (stringLiteral <* ws <* char ':' <* ws) json
+   comma = ws *> char ',' <* ws
 
 main :: IO ()
 main = putStrLn "Hello, Haskell!"
