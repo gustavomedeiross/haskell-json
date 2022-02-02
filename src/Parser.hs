@@ -4,23 +4,22 @@ module Parser where
 
 import           Control.Applicative
 import           Data.Char
+import GHC.Float (int2Float)
 
 newtype Parser a =
   Parser
     { parse :: String -> Maybe (String, a)
     }
 
-instance Functor Parser
+instance Functor Parser where
   -- fmap :: (a -> b) -> Parser a -> Parser b
-                                              where
   fmap f parserA =
     Parser $ \input -> do
       (input', a) <- parse parserA input
       Just (input', f a)
 
-instance Applicative Parser
+instance Applicative Parser where
   -- pure :: a -> Parser a
-                           where
   pure a = Parser $ \input -> Just (input, a)
   -- <*> :: Parser (a -> b) -> Parser a -> Parser b
   parserA <*> parserB =
@@ -29,9 +28,8 @@ instance Applicative Parser
       (input'', a) <- parse parserB input'
       Just (input'', f a)
 
-instance Alternative Parser
+instance Alternative Parser where
   -- empty :: Parser a
-                       where
   empty = Parser (const Nothing)
   -- <|> :: Parser a -> Parser a -> Parser a
   parserA <|> parserB =
@@ -40,9 +38,8 @@ instance Alternative Parser
         Just (input', a) -> Just (input', a)
         Nothing          -> parse parserB input
 
-instance Monad Parser
+instance Monad Parser where
   -- >>= :: Parser a -> (a -> Parser b) -> Parser b
-                                                    where
   parserA >>= f =
     Parser $ \input -> do
       (input', a) <- parse parserA input
@@ -77,6 +74,28 @@ natural = read <$> some digit
 integer :: Parser Int
 integer = natural <|> char '-' *> (negate <$> natural)
 
+-- TODO: fix rounding problems
+float :: Parser Float
+float = do
+  isPositive <- False <$ char '-' <|> pure True
+  integral <- natural
+  char '.'
+  decimal <- natural
+  return (floatFromParts isPositive integral decimal)
+
+floatFromParts :: Bool -> Int -> Int -> Float
+floatFromParts isPositive integral decimal = signal * (int + dec)
+  where
+    int = int2Float integral
+    dec = shiftToDecimal $ int2Float decimal
+    signal = if isPositive then 1 else -1
+
+-- 1592.52 -> 0.159252
+shiftToDecimal :: Float -> Float
+shiftToDecimal x
+  | x >= 1 = shiftToDecimal $ x / 10
+  | otherwise = x
+
 whitespace :: Parser ()
 whitespace = () <$ satisfies (== ' ')
 
@@ -108,14 +127,14 @@ data JsonValue
   | JsonBool Bool
   | JsonString String
   | JsonInt Int
+  | JsonFloat Float
   | JsonArray [JsonValue]
   | JsonObject [(String, JsonValue)]
-  -- TODO: JsonFloat
   deriving (Show, Eq)
 
 json :: Parser JsonValue
 json =
-  jsonNull <|> jsonBool <|> jsonInt <|> jsonString <|> jsonArray <|> jsonObject
+  jsonNull <|> jsonBool <|> jsonFloat <|> jsonInt <|> jsonString <|> jsonArray <|> jsonObject
 
 jsonNull :: Parser JsonValue
 jsonNull = JsonNull <$ string "null"
@@ -131,6 +150,9 @@ jsonString = JsonString <$> stringLiteral
 
 jsonInt :: Parser JsonValue
 jsonInt = JsonInt <$> integer
+
+jsonFloat :: Parser JsonValue
+jsonFloat = JsonFloat <$> float
 
 jsonArray :: Parser JsonValue
 jsonArray = fmap JsonArray $ char '[' *> ws *> arrayValues <* ws <* char ']'
