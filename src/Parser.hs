@@ -1,42 +1,46 @@
-{-# LANGUAGE LambdaCase #-}
-
 module Parser where
 
 import           Control.Applicative
 import           Data.Char
-import GHC.Float (int2Float)
+import           GHC.Float           (fabsDouble, int2Float)
 
 newtype Parser a =
   Parser
-    { parse :: String -> Maybe (String, a)
+    { parse :: String -> Either ParserError (String, a)
     }
+
+newtype ParserError =
+  ParserError
+    { message :: String
+    }
+  deriving (Show, Eq)
 
 instance Functor Parser where
   -- fmap :: (a -> b) -> Parser a -> Parser b
   fmap f parserA =
     Parser $ \input -> do
       (input', a) <- parse parserA input
-      Just (input', f a)
+      Right (input', f a)
 
 instance Applicative Parser where
   -- pure :: a -> Parser a
-  pure a = Parser $ \input -> Just (input, a)
+  pure a = Parser $ \input -> Right (input, a)
   -- <*> :: Parser (a -> b) -> Parser a -> Parser b
   parserA <*> parserB =
     Parser $ \input -> do
       (input', f) <- parse parserA input
       (input'', a) <- parse parserB input'
-      Just (input'', f a)
+      Right (input'', f a)
 
 instance Alternative Parser where
   -- empty :: Parser a
-  empty = Parser (const Nothing)
+  empty = Parser $ const $ Left ParserError {message = "Empty"}
   -- <|> :: Parser a -> Parser a -> Parser a
   parserA <|> parserB =
     Parser $ \input ->
       case parse parserA input of
-        Just (input', a) -> Just (input', a)
-        Nothing          -> parse parserB input
+        Right (input', a) -> Right (input', a)
+        Left _            -> parse parserB input
 
 instance Monad Parser where
   -- >>= :: Parser a -> (a -> Parser b) -> Parser b
@@ -46,27 +50,28 @@ instance Monad Parser where
       parse (f a) input'
 
 char :: Char -> Parser Char
-char x =
-  Parser $ \case
-    y:ys
-      | y == x -> Just (ys, y)
-    _ -> Nothing
+char x = parseIf ("'" ++ [x] ++ "'") (x ==)
 
 string :: String -> Parser String
 string = traverse char
 
-satisfies :: (Char -> Bool) -> Parser Char
-satisfies f =
-  Parser $ \case
-    y:ys
-      | f y -> Just (ys, y)
-    _ -> Nothing
+parseIf :: String -> (Char -> Bool) -> Parser Char
+parseIf desc f = Parser fn
+  where
+    fn (y:ys)
+      | f y = Right (ys, y)
+      | otherwise =
+        Left
+          ParserError
+            {message = "Expected " ++ desc ++ ", found '" ++ [y] ++ "'"}
+    fn [] =
+      Left ParserError {message = "Unexpected end of file, expected " ++ desc}
 
 sepBy :: Parser a -> Parser b -> Parser [b]
 sepBy sep element = (:) <$> element <*> many (sep *> element) <|> pure []
 
 digit :: Parser Char
-digit = satisfies isDigit
+digit = parseIf "digit" isDigit
 
 natural :: Parser Int
 natural = read <$> some digit
@@ -88,7 +93,10 @@ floatFromParts isPositive integral decimal = signal * (int + dec)
   where
     int = int2Float integral
     dec = shiftToDecimal $ int2Float decimal
-    signal = if isPositive then 1 else -1
+    signal =
+      if isPositive
+        then 1
+        else -1
 
 -- 1592.52 -> 0.159252
 shiftToDecimal :: Float -> Float
@@ -97,13 +105,13 @@ shiftToDecimal x
   | otherwise = x
 
 whitespace :: Parser ()
-whitespace = () <$ satisfies (== ' ')
+whitespace = () <$ parseIf "whitespace" (== ' ')
 
 ws :: Parser ()
 ws = () <$ many whitespace
 
 normalChar :: Parser Char
-normalChar = satisfies ((&&) <$> (/= '"') <*> (/= '\\'))
+normalChar = parseIf "non-escape char" ((&&) <$> (/= '"') <*> (/= '\\'))
 
 -- TODO: handle unicode escape (\u)
 escapeChar :: Parser Char
@@ -134,7 +142,8 @@ data JsonValue
 
 json :: Parser JsonValue
 json =
-  jsonNull <|> jsonBool <|> jsonFloat <|> jsonInt <|> jsonString <|> jsonArray <|> jsonObject
+  jsonNull <|> jsonBool <|> jsonFloat <|> jsonInt <|> jsonString <|> jsonArray <|>
+  jsonObject
 
 jsonNull :: Parser JsonValue
 jsonNull = JsonNull <$ string "null"
